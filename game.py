@@ -1,4 +1,4 @@
-import pygame, random, platform, asyncio 
+import pygame, random, platform, asyncio, heapq
 from collections import deque
 
 pygame.init()
@@ -7,6 +7,7 @@ screen = pygame.display.set_mode((900, 900), 0, 32)
 display = pygame.Surface((300, 300))
 clock = pygame.time.Clock()
 font = pygame.font.SysFont('arial', 16)
+title_font = pygame.font.SysFont('arial', 24, bold=True)
 
 grass = pygame.image.load('grass.png').convert()
 grass.set_colorkey((0, 0, 0))
@@ -19,6 +20,9 @@ GRAY = (150, 150, 150)
 LIGHT = (255, 255, 200)
 GREEN = (100, 255, 100)
 HOVER_GRAY = (200, 200, 200)
+DARK_GRAY = (50, 50, 50)
+WHITE = (255, 255, 255)
+SHADOW = (30, 30, 30)
 
 ROWS, COLS = 15, 14
 TILE_WIDTH = 20
@@ -33,9 +37,17 @@ class Button:
         self.hovered = False
     
     def draw(self, surface):
+        shadow_rect = self.rect.copy()
+        shadow_rect.x += 3
+        shadow_rect.y += 3
+        pygame.draw.rect(surface, SHADOW, shadow_rect, border_radius=10)
+        
         color = HOVER_GRAY if self.hovered else GRAY
-        pygame.draw.rect(surface, color, self.rect)
-        text_surf = font.render(self.text, True, (255, 255, 255))
+        pygame.draw.rect(surface, color, self.rect, border_radius=10)
+        
+        pygame.draw.rect(surface, DARK_GRAY, self.rect, 2, border_radius=10)
+        
+        text_surf = font.render(self.text, True, WHITE)
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
     
@@ -114,6 +126,38 @@ def dfs_step(maze, stack, visited, goal):
     
     return False, visited, stack
 
+def heuristic(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+def a_star_step(maze, open_set, came_from, g_score, f_score, goal, visited):
+    if not open_set:
+        return None, came_from, open_set, visited
+    
+    _, current = heapq.heappop(open_set)
+    visited.add(current)
+    
+    if current == goal:
+        path = []
+        temp = current
+        while temp in came_from:
+            path.append(temp)
+            temp = came_from[temp]
+        path.append(goal)
+        return path[::-1], came_from, open_set, visited
+    
+    for dx, dy in DIRECTIONS:
+        neighbor = (current[0] + dx, current[1] + dy)
+        if 0 <= neighbor[0] < COLS and 0 <= neighbor[1] < ROWS and maze[neighbor[1]][neighbor[0]] == 0:
+            tentative_g_score = g_score[current] + 1
+            
+            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g_score
+                f_score[neighbor] = g_score[neighbor] + heuristic(neighbor, goal)
+                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+    
+    return False, came_from, open_set, visited
+
 def draw_maze(display, maze, visited, path, character_pos, start, goal, mode, path_length, move_count, won):
     display.fill((0, 0, 0))
     for y, row in enumerate(maze):
@@ -136,7 +180,7 @@ def draw_maze(display, maze, visited, path, character_pos, start, goal, mode, pa
             if (x, y) == character_pos:
                 display.blit(ball, (pos_x, pos_y - 14))
     
-    mode_text = f"Mode: {'BFS' if mode == 'bfs' else 'DFS' if mode == 'dfs' else 'Manual'}"
+    mode_text = f"Mode: {'BFS' if mode == 'bfs' else 'DFS' if mode == 'dfs' else 'A*' if mode == 'a_star' else 'Manual'}"
     display.blit(font.render(mode_text, True, (255, 255, 255)), (10, 10))
     if mode == 'manual':
         move_text = f"Moves: {move_count}"
@@ -149,18 +193,21 @@ def draw_maze(display, maze, visited, path, character_pos, start, goal, mode, pa
         display.blit(font.render("You Won!", True, (255, 255, 255)), (120, 70))
 
 def select_mode():
-    display.fill((0, 0, 0))
-    prompt = [
-        "Select Mode:",
-        "1 - BFS, 2 - DFS, 3 - Manual"
-    ]
-    for i, line in enumerate(prompt):
-        display.blit(font.render(line, True, (255, 255, 255)), (50, 80 + i * 20))
+    display.fill((37, 74, 92))
+    
+    title_surf = title_font.render("MAZOMETRIC - Select Mode", True, WHITE)
+    title_rect = title_surf.get_rect(center=(150, 40))
+    display.blit(title_surf, title_rect)
+    
+    subtitle_surf = font.render("Choose your pathfinding mode", True, (180, 180, 180))
+    subtitle_rect = subtitle_surf.get_rect(center=(150, 70))
+    display.blit(subtitle_surf, subtitle_rect)
     
     buttons = [
-        Button(100, 150, 100, 30, "BFS", 'bfs'),
-        Button(100, 190, 100, 30, "DFS", 'dfs'),
-        Button(100, 230, 100, 30, "Manual", 'manual'),
+        Button(100, 90, 100, 40, "BFS", 'bfs'),
+        Button(100, 140, 100, 40, "DFS", 'dfs'),
+        Button(100, 190, 100, 40, "A*", 'a_star'),
+        Button(100, 240, 100, 40, "Manual", 'manual'),
     ]
     
     while True:
@@ -185,6 +232,8 @@ def select_mode():
                 if event.key == pygame.K_2:
                     return 'dfs'
                 if event.key == pygame.K_3:
+                    return 'a_star'
+                if event.key == pygame.K_4:
                     return 'manual'
                 if event.key == pygame.K_ESCAPE:
                     return None
@@ -208,7 +257,11 @@ async def main():
         character_pos = start
         queue = deque([(start, [start])]) if mode == 'bfs' else None
         stack = [(start, [start])] if mode == 'dfs' else None
-        visited = set([start]) if mode in ['bfs', 'dfs'] else set()
+        open_set = [(0, start)] if mode == 'a_star' else None
+        came_from = {start: None} if mode == 'a_star' else None
+        g_score = {start: 0} if mode == 'a_star' else None
+        f_score = {start: heuristic(start, goal)} if mode == 'a_star' else None
+        visited = set([start]) if mode in ['bfs', 'dfs', 'a_star'] else set()
         path = None
         path_index = 0
         path_length = None
@@ -218,6 +271,7 @@ async def main():
         last_step_time = pygame.time.get_ticks()
         last_move_time = pygame.time.get_ticks()
         won = False
+        searching = True
         
         running = True
         while running:
@@ -250,12 +304,13 @@ async def main():
                             move_count += 1
                             visited.add(character_pos)
             
-            if not won:
+            if not won and searching:
                 if mode == 'bfs' and not path and queue and (current_time - last_step_time >= step_delay):
                     result, visited, queue = bfs_step(maze, queue, visited, goal)
                     if result:
                         path = result
                         path_length = len(path)
+                        searching = False
                     last_step_time = current_time
                 
                 if mode == 'dfs' and not path and stack and (current_time - last_step_time >= step_delay):
@@ -263,12 +318,22 @@ async def main():
                     if result:
                         path = result
                         path_length = len(path)
+                        searching = False
                     last_step_time = current_time
                 
-                if path and path_index < len(path) and (current_time - last_move_time >= move_delay):
-                    character_pos = path[path_index]
-                    path_index += 1
-                    last_move_time = current_time
+                if mode == 'a_star' and not path and open_set and (current_time - last_step_time >= step_delay):
+                    result, came_from, open_set, visited = a_star_step(maze, open_set, came_from, g_score, f_score, goal, visited)
+                    if result:
+                        path = result
+                        path_length = len(path)
+                        searching = False
+                    last_step_time = current_time
+            
+            if not searching and path and path_index < len(path) and (current_time - last_move_time >= move_delay):
+                character_pos = path[path_index]
+                path_index += 1
+                visited.add(character_pos)
+                last_move_time = current_time
             
             if character_pos == goal:
                 won = True
