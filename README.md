@@ -1,1 +1,3 @@
 # MAZOMETRIC
+
+![algorithms](algorithms.jpg)

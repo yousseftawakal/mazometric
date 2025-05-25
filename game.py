@@ -1,5 +1,8 @@
 import pygame, random, platform, asyncio, heapq
 from collections import deque
+import cv2
+import numpy as np
+import os
 
 pygame.init()
 pygame.display.set_caption('MAZOMETRIC')
@@ -8,6 +11,17 @@ display = pygame.Surface((300, 300))
 clock = pygame.time.Clock()
 font = pygame.font.SysFont('arial', 16)
 title_font = pygame.font.SysFont('arial', 24, bold=True)
+
+# Load and prepare video background
+video = None
+if os.path.exists('background.mp4'):
+    video = cv2.VideoCapture('background.mp4')
+    if video.isOpened():
+        video_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+        video_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_fps = video.get(cv2.CAP_PROP_FPS)
+    else:
+        video = None
 
 grass = pygame.image.load('grass.png').convert()
 grass.set_colorkey((0, 0, 0))
@@ -56,6 +70,19 @@ class Button:
     
     def check_click(self, mouse_pos):
         return self.mode if self.rect.collidepoint(mouse_pos) else None
+
+def get_next_frame():
+    if video is None:
+        # Return a black surface if no video is available
+        return pygame.Surface((300, 300))
+    
+    ret, frame = video.read()
+    if not ret:
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset video to start
+        ret, frame = video.read()
+    frame = cv2.resize(frame, (300, 300))  # Resize to match display size
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+    return pygame.surfarray.make_surface(frame.swapaxes(0, 1))
 
 def generate_maze(rows, cols):
     maze = [[1] * cols for _ in range(rows)]
@@ -192,32 +219,70 @@ def draw_maze(display, maze, visited, path, character_pos, start, goal, mode, pa
     if won:
         display.blit(font.render("You Won!", True, (255, 255, 255)), (120, 70))
 
+def cleanup_video():
+    global video
+    if video is not None:
+        video.release()
+        video = None
+
 def select_mode():
-    display.fill((37, 74, 92))
+    display.fill((20, 20, 20))  # Dark background
     
-    title_surf = title_font.render("MAZOMETRIC - Select Mode", True, WHITE)
-    title_rect = title_surf.get_rect(center=(150, 40))
+    # Get and display video frame
+    frame = get_next_frame()
+    display.blit(frame, (0, 0))
+    
+    # Add semi-transparent overlay
+    overlay = pygame.Surface((300, 300), pygame.SRCALPHA)
+    overlay.fill((20, 20, 20, 128))  # Semi-transparent dark overlay
+    display.blit(overlay, (0, 0))
+    
+    # Draw background grid effect first
+    for i in range(0, 300, 20):
+        pygame.draw.line(display, (30, 30, 30), (i, 0), (i, 300))
+        pygame.draw.line(display, (30, 30, 30), (0, i), (300, i))
+    
+    # Title with neon effect
+    title_surf = title_font.render("MAZOMETRIC", True, (255, 255, 255))
+    title_shadow = title_font.render("MAZOMETRIC", True, (0, 195, 255))
+    title_rect = title_surf.get_rect(center=(150, 30))
+    display.blit(title_shadow, (title_rect.x + 2, title_rect.y + 2))
     display.blit(title_surf, title_rect)
     
-    subtitle_surf = font.render("Choose your pathfinding mode", True, (180, 180, 180))
-    subtitle_rect = subtitle_surf.get_rect(center=(150, 70))
+    # Subtitle with modern styling
+    subtitle_surf = font.render("Select Mode", True, (200, 200, 200))
+    subtitle_rect = subtitle_surf.get_rect(center=(150, 55))
     display.blit(subtitle_surf, subtitle_rect)
     
+    # Modern button layout
     buttons = [
-        Button(100, 90, 100, 40, "BFS", 'bfs'),
-        Button(100, 140, 100, 40, "DFS", 'dfs'),
-        Button(100, 190, 100, 40, "A*", 'a_star'),
-        Button(100, 240, 100, 40, "Manual", 'manual'),
+        Button(75, 80, 150, 40, "BFS", 'bfs'),
+        Button(75, 130, 150, 40, "DFS", 'dfs'),
+        Button(75, 180, 150, 40, "A*", 'a_star'),
+        Button(75, 230, 150, 40, "Manual", 'manual'),
     ]
     
     while True:
         mouse_pos = pygame.mouse.get_pos()
         scaled_pos = (mouse_pos[0] / 3, mouse_pos[1] / 3)
         
-        for button in buttons:
-            button.check_hover(scaled_pos)
+        # Update video frame
+        frame = get_next_frame()
+        display.blit(frame, (0, 0))
+        display.blit(overlay, (0, 0))
+        
+        # Redraw grid
+        for i in range(0, 300, 20):
+            pygame.draw.line(display, (30, 30, 30), (i, 0), (i, 300))
+            pygame.draw.line(display, (30, 30, 30), (0, i), (300, i))
+        
+        # Redraw UI elements
+        display.blit(title_shadow, (title_rect.x + 2, title_rect.y + 2))
+        display.blit(title_surf, title_rect)
+        display.blit(subtitle_surf, subtitle_rect)
         
         for button in buttons:
+            button.check_hover(scaled_pos)
             button.draw(display)
         
         screen.blit(pygame.transform.scale(display, screen.get_size()), (0, 0))
@@ -225,22 +290,29 @@ def select_mode():
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                cleanup_video()
                 return None
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_1:
+                    cleanup_video()
                     return 'bfs'
                 if event.key == pygame.K_2:
+                    cleanup_video()
                     return 'dfs'
                 if event.key == pygame.K_3:
+                    cleanup_video()
                     return 'a_star'
                 if event.key == pygame.K_4:
+                    cleanup_video()
                     return 'manual'
                 if event.key == pygame.K_ESCAPE:
+                    cleanup_video()
                     return None
             if event.type == pygame.MOUSEBUTTONDOWN:
                 for button in buttons:
                     result = button.check_click(scaled_pos)
                     if result is not None:
+                        cleanup_video()
                         return result
 
 async def main():
@@ -250,6 +322,13 @@ async def main():
         if not mode:
             game_running = False
             break
+        
+        # Reinitialize video for the new game
+        global video
+        if os.path.exists('background.mp4'):
+            video = cv2.VideoCapture('background.mp4')
+            if not video.isOpened():
+                video = None
         
         maze = generate_maze(ROWS, COLS)
         start = (0, 0)
@@ -338,11 +417,21 @@ async def main():
             if character_pos == goal:
                 won = True
             
+            # Get and display video frame
+            frame = get_next_frame()
+            display.blit(frame, (0, 0))
+            
+            # Add semi-transparent overlay
+            overlay = pygame.Surface((300, 300), pygame.SRCALPHA)
+            overlay.fill((20, 20, 20, 128))  # Semi-transparent dark overlay
+            display.blit(overlay, (0, 0))
+            
             draw_maze(display, maze, visited, path, character_pos, start, goal, mode, path_length, move_count, won)
             screen.blit(pygame.transform.scale(display, screen.get_size()), (0, 0))
             pygame.display.update()
             await asyncio.sleep(1.0 / 60)
     
+    cleanup_video()
     pygame.quit()
 
 if platform.system() == "Emscripten":
